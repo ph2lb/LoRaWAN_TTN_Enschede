@@ -1,4 +1,4 @@
-
+/* Cor      07-6-2017 - Cayenne LPP datastructuur
 /* Cor      22-4-2017 - Uitgangspunt voor de TTN Enschede bouwavond
 /* Jeroen / 5-12-2016 - kale Ideetron versie genomen met kleine aanpassingen voor TTN Apeldoorn bouwavond 
 /******************************************************************************************
@@ -56,36 +56,18 @@
 * Removed a bug from the Waitloop file
 * Now using AppSkey in Encrypt payload function (Thanks to Willem4ever)
 * Switching to standby at start of send package function
-****************************************************************************************
-* Modifications by Lex PH2LB : 
+*
+* Firmware version 3.2
+* Merged I2C_ReadAllData.ino from 
+* https://github.com/sparkfun/SparkFun_BME280_Arduino_Library
+* for interfacing with the BMP280
 * 
-* Added BMP280 sensor  
-* payload function : 
-*  
-function Decoder(bytes, port) 
-{ 
-  if (bytes.length >= 2)
-  {
-    var temperature = (((bytes[0] << 8) | bytes[1]) / 10.0) - 40.0;
-  } 
-  if (bytes.length >= 4)
-  { 
-    var pressure = ((bytes[2] << 8) | bytes[3]);
-  }
-  if (bytes.length >= 5)
-  { 
-    var humidity = bytes[4];
-  }
-  
-  // Decoder  
-  return { 
-    temperature: temperature,
-    pressure: pressure,
-    humidity: humidity,
-    bytes: bytes
-  };
+* Firmware version 3.3
+* Use Cayenne Low Power Payload datastructures
+*   in order to use myDevices.com account
+*   
+****************************************************************************************/
 
- */
 /*
 *****************************************************************************************
 * INCLUDE FILES
@@ -98,10 +80,41 @@ function Decoder(bytes, port)
 #include "RFM95_V21.h"
 #include "LoRaMAC_V11.h"
 #include "Waitloop_V11.h"
-#include <Adafruit_BMP280.h>
 
+// added for the bme280 support
 #include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP280.h>
+Adafruit_BMP280 bme; // I2C
 
+#define USE_CAYENNE 1
+
+#ifdef USE_CAYENNE
+#include "CayenneLPP.h"
+CayenneLPP lpp(51);                    // create a buffer of 51 bytes to store the payload
+#endif
+
+/* TTN payload decoder : 
+
+function Decoder(bytes, port) 
+{ 
+  if (bytes.length >= 2)
+  {
+    var temperature = (((bytes[0] << 8) | bytes[1]) / 10.0) - 40.0;
+  } 
+  if (bytes.length >= 4)
+  { 
+    var pressure = ((bytes[2] << 8) | bytes[3]);
+  }
+  // Decoder  
+  return { 
+    temperature: temperature,
+    pressure: pressure,
+    bytes: bytes
+  };
+}
+*/
+ 
 /*
 *****************************************************************************************
 * GLOBAL VARIABLES
@@ -113,8 +126,9 @@ unsigned char NwkSkey[16] = { 0x37, 0xAD, 0x2F, 0x38, 0x20, 0x94, 0xB1, 0x4D, 0x
 unsigned char AppSkey[16] = { 0x44, 0xDD, 0x02, 0x2F, 0x4B, 0x16, 0x5C, 0x1E, 0x41, 0xFD, 0x20, 0x99, 0x4D, 0x2A, 0xFB, 0xAD };
 unsigned char DevAddr[4] = { 0x26, 0x01, 0x11, 0xBC };
  
-
-Adafruit_BMP280 bme; // I2C
+//WOUTER unsigned char NwkSkey[16] = { 0x7D, 0x0C, 0x5F, 0xEF, 0xDF, 0x90, 0x87, 0xC8, 0x84, 0x0D, 0xB5, 0xDB, 0xF8, 0xC5, 0xE2, 0xC7 };
+//unsigned char AppSkey[16] = { 0xA3, 0x6F, 0x08, 0xE6, 0x38, 0x20, 0xB7, 0x20, 0xCE, 0x6F, 0xE4, 0xA4, 0xB8, 0x64, 0x7A, 0x14 };
+//unsigned char DevAddr[4] = { 0x26, 0x01, 0x12, 0xA2 }; 
 
 int FC = 0;
 // SF to set in LoRaWAN)V31.h (default SF9 is set) - quick and dirty implemented (TBC)
@@ -124,14 +138,24 @@ void setup()
   //Initialize the UART
   Serial.begin(115200);
   Serial.println("---");
-  Serial.println("What: TTN Enschede - LoRa node bouwavond BMP280 versie");
-  Serial.println("Setup: Initialized serial port");
+  Serial.println("What: TTN Enschede - LoRa node bouwavond");
 
-  
+    
   if (!bme.begin(0x76)) {  
-    Serial.println("Could not find a valid BMP280 sensor, check wiring!");
+    Serial.println(F("Could not find a valid bme280 sensor, check wiring!"));
     while (1);
   }
+
+  Serial.print(F("Temperature = "));
+  float temp = bme.readTemperature();
+  float pressure = bme.readPressure() / 100.0;
+  Serial.print(temp);
+  Serial.println(" *C");
+  Serial.print(F("Pressure = "));
+  Serial.print(pressure);
+  Serial.println(" millibar"); 
+  
+  Serial.println("Setup: Initialized serial port");
 
    //Initialise the SPI port
   SPI.begin();
@@ -165,41 +189,59 @@ void loop()
   unsigned char Data_Tx[256];
   unsigned char Data_Rx[64];
   unsigned char Data_Length_Tx;
-  unsigned char Data_Length_Rx = 0x00; 
+  unsigned char Data_Length_Rx = 0x00;
+  char msg[64];
 
   //Initialize RFM module
   Serial.println("Loop: Initializing RFM95");
   RFM_Init();
   delay(1000);
 
-    // Here the sensor information should be retrieved 
-  float t_float = bme.readTemperature();
-  float p_float = bme.readPressure() / 100.0; // pa = mBar
-  float h_float = 0.0;  // BMP280 doesn t have humidity
-  Serial.print("Temperature = ");
-  Serial.print(t_float);
+  // Here the sensor information should be retrieved 
+  //  Pressure: 300...1100 hPa
+  //  Temperature: -40…85°C
+
+  float temp = bme.readTemperature();
+  float pressure = bme.readPressure() / 100.0;    // from pascal to hPa (milliBar)
+  float humidity = 0.0; // bme.readHumidity();
+  
+  Serial.print(F("Temperature = "));
+  Serial.print(temp);
   Serial.println(" *C");
   
-  Serial.print("Pressure = ");
-  Serial.print(p_float);
-  Serial.println(" mBar");
- 
-  int h = (int)h_float;
-  int p = (int)p_float;
-  int t = (int)((t_float + 40.0) * 10.0);
-  // t = t + 40; // t [-40..+80] => [0..120]
-  // t = t * 10; // t [0..120] => [0..1200] 
-    
+  Serial.print(F("Pressure = "));
+  Serial.print(pressure);
+  Serial.println(" millibar"); 
+  
+  Serial.print("Humidity = ");
+  Serial.print(humidity);
+  Serial.println(" %");
+
+
+  Serial.println("Loop: Sending data");
+
+#ifdef USE_CAYENNE
+    lpp.reset();                           // clear the buffer
+    lpp.addTemperature(1, temp);           // on channel 1, add temperature, value 22.5°C
+    lpp.addBarometricPressure(2, pressure); // channel 2, pressure
+    Data_Length_Rx = LORA_Cycle(lpp.getBuffer(), Data_Rx, lpp.getSize());
+#else
+  int t = (int)((temp + 40.0) * 10.0); 
+  // t = t + 40; => t [-40..+85] => [0..125] => t = t * 10; => t [0..125] => [0..1250]
+  int p = (int)(pressure);  // p [300..1100]
+  int h = (int)(humidity);
+
   Data_Tx[0] = t >> 8;
   Data_Tx[1] = t & 0xFF;
   Data_Tx[2] = p >> 8;
   Data_Tx[3] = p & 0xFF;
   Data_Tx[4] = h & 0xFF;
-  Data_Length_Tx = 5; 
- 
+  Data_Length_Tx = 5; // just 5 bytes 
 
-  Serial.println("Loop: Sending data");
   Data_Length_Rx = LORA_Cycle(Data_Tx, Data_Rx, Data_Length_Tx);
+#endif
+
+
   FC = FC + 1;
   
   //Delay of 1 minute 
