@@ -1,6 +1,8 @@
-/* Cor      07-6-2017 - Cayenne LPP datastructuur
-/* Cor      22-4-2017 - Uitgangspunt voor de TTN Enschede bouwavond
-/* Jeroen / 5-12-2016 - kale Ideetron versie genomen met kleine aanpassingen voor TTN Apeldoorn bouwavond 
+/*
+* Lex      22-6-2017 - Added BME280 support
+* Cor      07-6-2017 - Cayenne LPP datastructuur
+* Cor      22-4-2017 - Uitgangspunt voor de TTN Enschede bouwavond
+* Jeroen / 5-12-2016 - kale Ideetron versie genomen met kleine aanpassingen voor TTN Apeldoorn bouwavond
 /******************************************************************************************
 * Copyright 2015, 2016 Ideetron B.V.
 *
@@ -66,6 +68,9 @@
 * Use Cayenne Low Power Payload datastructures
 *   in order to use myDevices.com account
 *   
+*
+* Firmware version 3.3b
+*   Added BME280 support
 ****************************************************************************************/
 
 /*
@@ -84,8 +89,18 @@
 // added for the bme280 support
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
+
+#define USE_BME280
+
+#ifdef USE_BME280
+#include <Adafruit_BME280.h>
+Adafruit_BME280 bmx; // I2C
+#define BMx280_ADDRESS 0x76
+#else
 #include <Adafruit_BMP280.h>
-Adafruit_BMP280 bme; // I2C
+Adafruit_BMP280 bmx; // I2C
+#define BMx280_ADDRESS 0x76
+#endif
 
 #define USE_CAYENNE 1
 
@@ -93,6 +108,7 @@ Adafruit_BMP280 bme; // I2C
 #include "CayenneLPP.h"
 CayenneLPP lpp(51);                    // create a buffer of 51 bytes to store the payload
 #endif
+
 
 /* TTN payload decoder : 
 
@@ -106,10 +122,15 @@ function Decoder(bytes, port)
   { 
     var pressure = ((bytes[2] << 8) | bytes[3]);
   }
+  if (bytes.length >= 5)
+  { 
+    var humidity = bytes[4];
+  }
   // Decoder  
   return { 
     temperature: temperature,
     pressure: pressure,
+    humidity: humidity,
     bytes: bytes
   };
 }
@@ -141,10 +162,11 @@ void setup()
   Serial.println("What: TTN Enschede - LoRa node bouwavond");
 
     
-  if (!bme.begin(0x76)) {  
+  if (!bmx.begin(BMx280_ADDRESS)) {
     Serial.println(F("Could not find a valid bme280 sensor, check wiring!"));
     while (1);
   }
+
 
   Serial.print(F("Temperature = "));
   float temp = bme.readTemperature();
@@ -201,9 +223,14 @@ void loop()
   //  Pressure: 300...1100 hPa
   //  Temperature: -40…85°C
 
-  float temp = bme.readTemperature();
-  float pressure = bme.readPressure() / 100.0;    // from pascal to hPa (milliBar)
-  float humidity = 0.0; // bme.readHumidity();
+  float temp = bmx.readTemperature();
+  float pressure = bmx.readPressure() / 100.0;    // from pascal to hPa (milliBar)
+  float humidity = 0.0;
+
+#ifdef USE_BME280
+   humidity =   bmx.readHumidity();
+#endif
+
   
   Serial.print(F("Temperature = "));
   Serial.print(temp);
@@ -221,12 +248,13 @@ void loop()
   Serial.println("Loop: Sending data");
 
 #ifdef USE_CAYENNE
-    lpp.reset();                           // clear the buffer
-    lpp.addTemperature(1, temp);           // on channel 1, add temperature, value 22.5°C
+    lpp.reset();                            // clear the buffer
+    lpp.addTemperature(1, temp);            // on channel 1, add temperature, value 22.5°C
     lpp.addBarometricPressure(2, pressure); // channel 2, pressure
+    lpp.addRelativeHumidity(3, humidity);            // channel 3, pressure
     Data_Length_Rx = LORA_Cycle(lpp.getBuffer(), Data_Rx, lpp.getSize());
 #else
-  int t = (int)((temp + 40.0) * 10.0); 
+  int t = (int)((temp + 40.0) * 10.0);
   // t = t + 40; => t [-40..+85] => [0..125] => t = t * 10; => t [0..125] => [0..1250]
   int p = (int)(pressure);  // p [300..1100]
   int h = (int)(humidity);
@@ -236,7 +264,7 @@ void loop()
   Data_Tx[2] = p >> 8;
   Data_Tx[3] = p & 0xFF;
   Data_Tx[4] = h & 0xFF;
-  Data_Length_Tx = 5; // just 5 bytes 
+  Data_Length_Tx = 5; // just 5 bytes
 
   Data_Length_Rx = LORA_Cycle(Data_Tx, Data_Rx, Data_Length_Tx);
 #endif
