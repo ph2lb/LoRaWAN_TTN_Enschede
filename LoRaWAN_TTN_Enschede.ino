@@ -269,6 +269,16 @@ void loop()
   Data_Length_Rx = LORA_Cycle(Data_Tx, Data_Rx, Data_Length_Tx);
 #endif
 
+    // let's see the downlink payload.
+  Serial.print("Rx (length): ");
+  Serial.println(Data_Length_Rx);
+  if (Data_Length_Rx > 0) {
+    Serial.print("Rx (data): ");
+    for (int i = 0; i < Data_Length_Rx; i++){
+      Serial.print(Data_Rx[i]);
+    }
+  }
+  Serial.println();
 
   FC = FC + 1;
   
